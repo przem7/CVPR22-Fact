@@ -1,6 +1,7 @@
 import argparse
 import importlib
 from utils import *
+from dataloader.data_utils import get_new_dataloader, set_up_datasets, get_new_dataloader_for_hn
 
 MODEL_DIR=None
 DATA_DIR = 'data/'
@@ -10,7 +11,7 @@ def get_command_line_parser():
     parser = argparse.ArgumentParser()
 
     # about dataset and network
-    parser.add_argument('-project', type=str, default=PROJECT)
+    parser.add_argument('-project', type=str, default=PROJECT, choices=[PROJECT, 'fact', 'hypernet'])
     parser.add_argument('-dataset', type=str, default='cub200',
                         choices=['mini_imagenet', 'cub200', 'cifar100'])
     parser.add_argument('-dataroot', type=str, default=DATA_DIR)
@@ -46,6 +47,16 @@ def get_command_line_parser():
     parser.add_argument('-start_session', type=int, default=0)
     parser.add_argument('-model_dir', type=str, default=MODEL_DIR, help='loading model parameter from a specific dir')
     parser.add_argument('-set_no_val', action='store_true', help='set validation using test set or no validation')
+
+    # gmum project
+    parser.add_argument('-loss', type=str, default='cramerWold', help='Loss used during the training. Valid only for hypernet model.', choices=['cramerWold', 'KDWithCE'])
+    parser.add_argument('-hypernet_depth', type=int, default=2, help='The depth of hyper network')
+    parser.add_argument('-hypernet_width', type=int, default=512, help='The width of hyper network')
+    parser.add_argument('-train_tasks', type=int, default=10, help='Number of tasks used during training')
+
+    # custom
+    parser.add_argument('-T', type=float, default=1.0)
+    parser.add_argument('-lamb', type=float, default=1.0)
 
     # about training
     parser.add_argument('-gpu', default='0,1,2,3')

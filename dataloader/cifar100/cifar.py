@@ -4,6 +4,7 @@ import os
 import os.path
 import numpy as np
 import pickle
+import random
 
 import torchvision.transforms as transforms
 
@@ -50,12 +51,18 @@ class CIFAR10(VisionDataset):
     }
 
     def __init__(self, root, train=True, transform=None, target_transform=None,
-                 download=False, index=None, base_sess=None,autoaug=1):
+                 download=False, index=None, base_sess=None, autoaug=1, train_tasks=None, shot=5, few_shot=False,
+                 session_classes=[]):
 
         super(CIFAR10, self).__init__(root, transform=transform,
                                       target_transform=target_transform)
         self.root = os.path.expanduser(root)
         self.train = train  # training set or test set
+        self.train_tasks = train_tasks
+        self.shot = shot
+        self.base_sess = base_sess
+        self.few_shot = few_shot
+        self.session_classes = session_classes
 
         if download:
             self.download()
@@ -125,13 +132,46 @@ class CIFAR10(VisionDataset):
 
         if base_sess:
             self.data, self.targets = self.SelectfromDefault(self.data, self.targets, index)
-        else:  # new Class session
+        else:  # new Class session        
             if train:
-                self.data, self.targets = self.NewClassSelector(self.data, self.targets, index)
+                if self.few_shot is False:
+                    self.data, self.targets = self.NewClassSelector(self.data, self.targets, index)
+                elif self.few_shot is True:
+                    data_index = self.get_data_index(self.data, self.targets, index)
+                    self.data, self.targets = self.NewClassSelector(self.data, self.targets, data_index)
             else:
-                self.data, self.targets = self.SelectfromDefault(self.data, self.targets, index)
+                if self.few_shot is False:
+                    self.data, self.targets = self.SelectfromDefault(self.data, self.targets, index)
+                elif self.few_shot is True:
+                    data_index = self.get_data_index(self.data, self.targets, index)
+                    self.data, self.targets = self.NewClassSelector(self.data, self.targets, data_index)
 
         self._load_meta()
+
+    def get_data_index(self, data, targets, index):
+        if self.train_tasks is not None:
+            new_classes_in_session = self.session_classes
+
+            class_range_indexes = {}
+            for clazz in new_classes_in_session:
+                class_range_indexes[clazz] = self.find_indices(targets, clazz)
+            
+            index = []
+            for i in range(self.train_tasks):
+                for clazz in new_classes_in_session:
+                    samples_num = len(class_range_indexes[clazz])
+                    for w in range(self.shot):
+                        random_index = random.randrange(samples_num)
+                        index.append(class_range_indexes[clazz][random_index])
+
+        return index
+
+    def find_indices(self, list_to_check, item_to_find):
+        indices = []
+        for idx, value in enumerate(list_to_check):
+            if value == item_to_find:
+                indices.append(idx)
+        return indices
 
     def SelectfromDefault(self, data, targets, index):
         data_tmp = []
@@ -152,7 +192,7 @@ class CIFAR10(VisionDataset):
         targets_tmp = []
         ind_list = [int(i) for i in index]
         ind_np = np.array(ind_list)
-        index = ind_np.reshape((5,5))
+        index = ind_np.reshape((-1, self.shot))
         for i in index:
             ind_cl = i
             if data_tmp == []:
