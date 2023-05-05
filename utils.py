@@ -29,6 +29,9 @@ def set_seed(seed):
 
 
 def set_gpu(args):
+    if not args.gpu:
+        print('using cpu only')
+        return 0
     gpu_list = [int(x) for x in args.gpu.split(',')]
     print('use gpu:', gpu_list)
     os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'

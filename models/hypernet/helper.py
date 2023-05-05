@@ -20,7 +20,7 @@ def base_train(model, trainloader, optimizer, scheduler, epoch, args):
     tqdm_gen = tqdm(trainloader)
 
     for i, batch in enumerate(tqdm_gen, 1):
-        data, train_label = [_.cuda() for _ in batch]
+        data, train_label = [_.to(args.device) for _ in batch]
         
         logits, feature = model(data, encoded=True)
         logits_ = logits[:, :args.base_class]
@@ -42,7 +42,7 @@ def base_train(model, trainloader, optimizer, scheduler, epoch, args):
     tl = tl.item()
     ta = ta.item()
 
-    return tl, ta, lrc
+    return tl, ta
         
 def test(model, testloader, epoch,args, session,validation=True):
     test_class = args.base_class + session * args.way
@@ -52,7 +52,7 @@ def test(model, testloader, epoch,args, session,validation=True):
 
     with torch.no_grad():
         for i, batch in enumerate(testloader, 1):
-            data, test_label = [_.cuda() for _ in batch]
+            data, test_label = [_.to(args.device) for _ in batch]
             logits = model(data)
             logits = logits[:, :test_class]
             loss = F.cross_entropy(logits, test_label)

@@ -77,8 +77,8 @@ class MYNET(nn.Module):
 
         with torch.enable_grad():
             for support_batch, query_batch in zip(support_loader, query_loader):
-                support_data, support_label = [_.cuda() for _ in support_batch]
-                query_data, query_label = [_.cuda() for _ in query_batch]
+                support_data, support_label = [_.to(self.args.device) for _ in support_batch]
+                query_data, query_label = [_.to(self.args.device) for _ in query_batch]
                 
                 support_feature = self.encode(support_data)
                 

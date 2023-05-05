@@ -12,6 +12,16 @@ from utils import *
 from dataloader.data_utils import *
 from collections import OrderedDict
 
+
+class CPUWrapper(nn.Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def forward(self, x, *args, **kwargs):
+        return self.module(x, *args, **kwargs)
+
+
 class FSCILTrainer(Trainer):
     def __init__(self, args):
         super().__init__(args)
@@ -20,8 +30,13 @@ class FSCILTrainer(Trainer):
         self.args, self.dataset = set_up_datasets(self.args)
 
         self.model = MYNET(self.args, mode=self.args.base_mode)
-        self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
-        self.model = self.model.cuda()
+
+        if self.args.device == "cuda":
+            self.model = nn.DataParallel(self.model, None)
+            self.model = self.model.cuda()
+        else:
+            self.model = CPUWrapper(self.model)
+            self.model = self.model.cpu()
 
         if self.args.model_dir is not None:
             print('Loading init parameters from: %s' % self.args.model_dir)
@@ -75,6 +90,7 @@ class FSCILTrainer(Trainer):
 
                 for epoch in range(args.epochs_base):
                     start_time = time.time()
+                    tl, ta = base_train(self.model, trainloader, optimizer, scheduler, epoch, args)
                     # test model with all seen class
                     tsl, tsa = test(self.model, testloader, epoch, args, session)
 
@@ -118,7 +134,7 @@ class FSCILTrainer(Trainer):
                 print(acc_matrix)
 
             else:  # incremental learning sessions
-                trainset, trainloader, train_query_loader, test_support_loader, testloader = self.get_dataloader(session)
+                train_set, trainloader, train_query_loader, test_support_loader, testloader = self.get_dataloader(session)
                 print("training session: [%d]" % session)
 
                 self.model.module.mode = self.args.new_mode
@@ -150,7 +166,8 @@ class FSCILTrainer(Trainer):
         print(self.trlog['max_acc'])
         save_list_to_txt(os.path.join(args.save_path, 'results.txt'), result_list)
 
-        self.log_acc_matrix(acc_matrix)
+        if os.environ.get("WANDB_ENTITY") is not None:
+            self.log_acc_matrix(acc_matrix)
 
         t_end_time = time.time()
         total_time = (t_end_time - t_start_time) / 60
@@ -177,7 +194,7 @@ class FSCILTrainer(Trainer):
 
         with torch.no_grad():
             for i, batch in enumerate(testloader):
-                data, test_label = [_.cuda() for _ in batch]
+                data, test_label = [_.to(self.args.device) for _ in batch]
                     
                 logits = self.model(data)
                 logits_ = logits[:, :high_idx]
@@ -203,11 +220,12 @@ class FSCILTrainer(Trainer):
             vcsa = sess_averagers[f"session_{session}"].item()
             
             PARENT = 'few_shot_sessions'
-            wandb.log({
-                    f'{PARENT}/test_loss': vl,
-                    f'{PARENT}/test_accuracy': va,
-                    f'{PARENT}/current_session_accuracy': vcsa
-                  })
+            if os.environ.get("WANDB_ENTITY") is not None:
+                wandb.log({
+                        f'{PARENT}/test_loss': vl,
+                        f'{PARENT}/test_accuracy': va,
+                        f'{PARENT}/current_session_accuracy': vcsa
+                      })
             print('sess {}, test, loss={:.4f} acc={:.4f}, acc@5={:.4f}, crr sess acc: {:.4f}'.format(session, vl, va, va5, vcsa))
         
         sess_acc_list = [ v.item() for k, v in sess_averagers.items() ]

@@ -59,7 +59,7 @@ def get_command_line_parser():
     parser.add_argument('-lamb', type=float, default=1.0)
 
     # about training
-    parser.add_argument('-gpu', default='0,1,2,3')
+    parser.add_argument('-gpu', default='')
     parser.add_argument('-num_workers', type=int, default=8)
     parser.add_argument('-seed', type=int, default=1)
     parser.add_argument('-debug', action='store_true')
@@ -72,5 +72,6 @@ if __name__ == '__main__':
     set_seed(args.seed)
     pprint(vars(args))
     args.num_gpu = set_gpu(args)
+    args.device = "cuda" if args.num_gpu != 0 else "cpu"
     trainer = importlib.import_module('models.%s.fscil_trainer' % (args.project)).FSCILTrainer(args)
     trainer.train()
