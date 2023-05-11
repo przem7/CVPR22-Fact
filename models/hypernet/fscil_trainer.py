@@ -13,7 +13,7 @@ from dataloader.data_utils import *
 from collections import OrderedDict
 
 
-class CPUWrapper(nn.Module):
+class PseudoParallelWrapper(nn.Module):
     def __init__(self, module):
         super().__init__()
         self.module = module
@@ -32,10 +32,13 @@ class FSCILTrainer(Trainer):
         self.model = MYNET(self.args, mode=self.args.base_mode)
 
         if self.args.device == "cuda":
-            self.model = nn.DataParallel(self.model, None)
+            if self.args.num_gpu > 1:
+                self.model = nn.DataParallel(self.model, None)
+            else:
+                self.model = PseudoParallelWrapper(self.model)
             self.model = self.model.cuda()
         else:
-            self.model = CPUWrapper(self.model)
+            self.model = PseudoParallelWrapper(self.model)
             self.model = self.model.cpu()
 
         if self.args.model_dir is not None:
@@ -48,6 +51,7 @@ class FSCILTrainer(Trainer):
                 print('WARING: Random init weights for new sessions!')
             self.best_model_dict = deepcopy(self.model.state_dict())
 
+        self.all_trainloaders = []
         maybe_setup_wandb(args)
 
     def get_optimizer_base(self):
@@ -85,6 +89,7 @@ class FSCILTrainer(Trainer):
 
             if session == 0:  # load base class train img label
                 train_set, trainloader, testloader = self.get_dataloader(session)
+                self.all_trainloaders.append(trainloader)
                 print('new classes for this session:\n', np.unique(train_set.targets))
                 optimizer, scheduler = self.get_optimizer_base()
 
@@ -127,29 +132,34 @@ class FSCILTrainer(Trainer):
                 result_list.append('Session {}, Test Best Epoch {},\nbest test Acc {:.4f}\n'.format(
                     session, self.trlog['max_acc_epoch'], self.trlog['max_acc'][session], ))
 
-                sess_acc_list = [ self.trlog['max_acc'][session] / 100 ]
-                sess_acc_list = sess_acc_list + [0] * (args.sessions - len(sess_acc_list))
-                acc_matrix.append(sess_acc_list)
+                acc_matrix_row = self.test_tasks_separately()
+                acc_matrix_row = acc_matrix_row + [0] * (args.sessions - len(acc_matrix_row))
+                acc_matrix.append(acc_matrix_row)
                 print(f'session {session} | acc matrix is:')
                 print(acc_matrix)
 
             else:  # incremental learning sessions
                 train_set, trainloader, train_query_loader, test_support_loader, testloader = self.get_dataloader(session)
+                self.all_trainloaders.append((trainloader, train_query_loader))
                 print("training session: [%d]" % session)
 
                 self.model.module.mode = self.args.new_mode
                 self.model.train()
                 
                 trainloader.dataset.transform = testloader.dataset.transform
-                self.model.module.adapt(trainloader, train_query_loader, np.unique(train_set.targets), session)
+                for i in range(50):
+                    self.model.module.adapt(trainloader, train_query_loader, np.unique(train_set.targets), session)
 
                 self.model.eval()
                 #tsl, tsa = test(self.model, testloader, 0, args, session,validation=False)
                 #tsl, tsa = test_withfc(self.model, testloader, 0, args, session,validation=False)
                 tsl, tsa, vcsa, sess_acc_list = self.test(test_support_loader, testloader,  session)
-                
-                sess_acc_list = sess_acc_list + [0] * (args.sessions - len(sess_acc_list))
-                acc_matrix.append(sess_acc_list)
+
+                acc_matrix_row = self.test_tasks_separately()
+                acc_matrix_row = acc_matrix_row + [0] * (args.sessions - len(acc_matrix_row))
+                acc_matrix.append(acc_matrix_row)
+                print(f'session {session} | acc matrix is:')
+                print(acc_matrix)
                 
                 # save model
                 self.trlog['max_acc'][session] = float('%.3f' % (tsa * 100))
@@ -199,7 +209,7 @@ class FSCILTrainer(Trainer):
                 logits = self.model(data)
                 logits_ = logits[:, :high_idx]
 
-                loss = F.cross_entropy(logits_, test_label)
+                loss = F.cross_entropy(logits_, test_label.long())
                 acc = count_acc(logits_, test_label)
 
                 if i < self.args.base_class:
@@ -230,6 +240,32 @@ class FSCILTrainer(Trainer):
         
         sess_acc_list = [ v.item() for k, v in sess_averagers.items() ]
         return vl, va, vcsa, sess_acc_list
+
+    def test_tasks_separately(self):
+        # evaluate model mode
+        self.model.eval()
+
+        # initialize averagers
+        base_sess_averager = Averager()
+
+        with torch.no_grad():
+            for i, batch in enumerate(self.all_trainloaders[0]):
+                data, label = [_.to(self.args.device) for _ in batch]
+
+                logits = self.model(data)
+
+                acc = count_acc(logits, label)
+
+                base_sess_averager.add(acc)
+
+        incremental_accuracies = []
+        if len(self.all_trainloaders) > 1:
+            for i, (loader_supp, loader_query) in enumerate(self.all_trainloaders[1:], 1):
+                acc = self.model.module.test_adapt(loader_supp, loader_query, None, i)
+                incremental_accuracies.append(acc)
+
+        sess_acc_list = [base_sess_averager.item()] + incremental_accuracies
+        return sess_acc_list
 
     def set_save_path(self):
         self.args.save_path = '%s/' % self.args.dataset

@@ -97,12 +97,37 @@ class MYNET(nn.Module):
                 optimizer.step()
 
                 acc = count_acc(logits, query_label)
-            
+
+    def test_adapt(self, support_loader, query_loader, class_list, session):
+        test_class_high = self.args.base_class + session * self.args.way
+        test_class_low = test_class_high - self.args.way
+
+        with torch.no_grad():
+            for support_batch, query_batch in zip(support_loader, query_loader):
+                support_data, support_label = [_.to(self.args.device) for _ in support_batch]
+                query_data, query_label = [_.to(self.args.device) for _ in query_batch]
+
+                support_feature = self.encode(support_data)
+
+                support_avg_embeddings = self.get_average_embeddings(support_feature, support_label)
+                support_avg_embeddings = support_avg_embeddings.view(-1, self.num_features * self.args.way)
+
+                delta = self.hypernet(support_avg_embeddings).view(self.args.way, self.num_features)
+
+                logits = self.forward_delta(query_data, test_class_low, test_class_high, delta, False)  # (25, 100)
+
+                ce_loss = self.criterion(test_class_low, test_class_high, logits, query_label)
+                total_loss = ce_loss
+
+
+                acc = count_acc(logits, query_label)
+        return acc
+
     def get_logits(self, x, fc):
         return F.linear(x, fc)
 
     def criterion(self, low_idx, high_idx, outputs, targets):
-        return torch.nn.functional.cross_entropy(outputs[:, :high_idx], targets)
+        return torch.nn.functional.cross_entropy(outputs[:, :high_idx], targets.long())
 
     def get_average_embeddings(self, embeddings, label):
         avg_enhanced_embeddings = []
